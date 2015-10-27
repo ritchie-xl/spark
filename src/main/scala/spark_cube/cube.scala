@@ -28,23 +28,17 @@ object cube {
     return months
   }
 
+  // remove specific char in a string
   def stripChars(s:String, ch:String) = s filterNot(ch contains _)
 
   def read_combo_file(combo_file:String):Array[String]={
     val lines = Source.fromFile(combo_file).getLines()
 
-    val ret_val = new Array[String](lines.length-1)
-
-    var i = 0
-    for (line <- Source.fromFile(combo_file).getLines()) {
-      if (i >= 1) {
-        ret_val.update(i-1, line)
-      }
-      i = i + 1
-    }
-
+    val ret_val = lines.filter(line => line.split(","){0} == "1")
+                            .map(line=>line.substring(2)).toArray
     return ret_val
   }
+
 
   def main (args: Array[String]){
     val file = args{0}
@@ -57,6 +51,7 @@ object cube {
     val all_months = get_12_months(yyyymm)
 
     val conf = new SparkConf().setAppName("Spark_cube").setMaster("local")
+    conf.set("spark.hadoop.validateOutputSpecs", "false")
 
     val sc = new SparkContext(conf)
 
@@ -83,7 +78,8 @@ object cube {
       val vars = combo.split(",")
       val combo_num = vars{0}
 
-      val rdd = personal_sum.map(line =>{
+      // Compute average
+      val rdd_avg = personal_sum.map(line =>{
         val fields = stripChars(line.toString(),"()").split(",")
         var key = ""+combo_num
         for(i <- 1 to vars.length-1){
@@ -99,8 +95,57 @@ object cube {
         (x:Double)=>(x,1),
         (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
         (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
-      ).map{case (key, value) => (key, value._1 / value._2.toFloat)}
-      rdd.foreach(println)
+      ).map{case (key, value) => (key, value._2.toString + "," +
+        (value._1 / value._2).toFloat.toString)}
+
+      // Apply filter employee count > 5
+      val new_rdd = rdd_avg.filter(_.toString().split(","){5}.toInt >= 5)
+      println(new_rdd.count())
+
+      // Compute max
+      val rdd_max = personal_sum.map(line =>{
+        val fields = stripChars(line.toString(),"()").split(",")
+        var key = ""+combo_num
+        for(i <- 1 to vars.length-1){
+          if(vars{i} == "1"){
+            key = key + "," + fields{i}
+          }else{
+            key = key + ","
+          }
+        }
+        val value = fields{5}.toDouble
+        (key,value)
+      }).reduceByKey((a,b) => if(a>b) a else b)
+
+      // Compute min
+      val rdd_min = personal_sum.map(line =>{
+        val fields = stripChars(line.toString(),"()").split(",")
+        var key = ""+combo_num
+        for(i <- 1 to vars.length-1){
+          if(vars{i} == "1"){
+            key = key + "," + fields{i}
+          }else{
+            key = key + ","
+          }
+        }
+        val value = fields{5}.toDouble
+        (key,value)
+      }).reduceByKey((a,b) => if(a<b) a else b)
+
+      // Join avg, max, and min together
+      val res = new_rdd.join(rdd_max).join(rdd_min)
+        .map(line => (stripChars(line.toString(),"()"), 1))
+
+      // Put all partitions into one and reformat the output
+      val result =  res.repartition(1).
+        reduceByKey {case (x,y) => x + y}.
+        sortBy {case (key, value) => value}.
+        map { case (key, value) => Array(key).mkString(",") }
+
+      // Save result
+      val file_name = "data/" + combo_num.toString
+//      try { hdfs.delete(new org.apache.hadoop.fs.Path(file_name), true) } catch { case _ : Throwable => { } }
+      result.saveAsTextFile(file_name)
     }
   }
  }
