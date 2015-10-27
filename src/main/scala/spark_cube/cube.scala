@@ -20,7 +20,6 @@ object cube {
 
       if ( mm < 10) {
         months{a} = yyyy.toString.concat("0".concat(mm.toString))
-
       }else{
         months{a} = yyyy.toString.concat(mm.toString)
       }
@@ -47,35 +46,19 @@ object cube {
     return ret_val
   }
 
-  def main (args: Array[String]) {
-    val file = args {
-      0
-    }
-    val combo_file = args {
-      1
-    }
-    val yyyymm = args {
-      2
-    }
-
-    val combos = read_combo_file(combo_file)
-    combos.foreach(println)
-
-
-  }
-
-  def main1 (args: Array[String]){
+  def main (args: Array[String]){
     val file = args{0}
     val combo_file = args{1}
     val yyyymm = args{2}
 
-    val conf = new SparkConf().setAppName("Spark_cube").setMaster("local")
-
-    val sc = new SparkContext(conf)
-
+    // Read all combos need to computer
     val combos = read_combo_file(combo_file)
     // Find out all the 12 months
     val all_months = get_12_months(yyyymm)
+
+    val conf = new SparkConf().setAppName("Spark_cube").setMaster("local")
+
+    val sc = new SparkContext(conf)
 
     // Load the file in Spark
     val data = sc.textFile(file)
@@ -95,47 +78,29 @@ object cube {
       (key,value)
     }).reduceByKey(_ + _)
 
-    // Compute the average for all the states
-    val state_only = personal_sum.map(line =>{
-      val fields = stripChars(line.toString(),"()").split(",")
-      val state =fields{3}
-      val wage = fields{5}.toDouble
-      (state,wage)
-    }).combineByKey(
-      (x:Double)=>(x,1),
-      (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
-      (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
-    ).map{case (key, value) => (key, value._1 / value._2.toFloat)}
+    // Iterate all combos
+    for(combo <- combos){
+      val vars = combo.split(",")
+      val combo_num = vars{0}
 
-    state_only.foreach(println)
-
-    // Industry only
-    val ind_only = personal_sum.map(line =>{
-      val fields = stripChars(line.toString(),"()").split(",")
-      val ind = fields{2}
-      val wage = fields{5}.toDouble
-      (ind,wage)
-    }).combineByKey(
-      (x:Double)=>(x,1),
-      (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
-      (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
-    ).map{case (key, value) => (key, value._1 / value._2.toFloat)}
-
-    ind_only.foreach(println)
-
-    // job and state
-    val job_state = personal_sum.map(line =>{
-      val fields = stripChars(line.toString(),"()").split(",")
-      val job_state = fields{1} + "," + fields{3}
-      val wage = fields{5}.toDouble
-      (job_state,wage)
-    }).combineByKey(
-      (x:Double)=>(x,1),
-      (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
-      (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
-    ).map{case (key, value) => (key, value._1 / value._2.toFloat)}
-
-    job_state.foreach(println)
+      val rdd = personal_sum.map(line =>{
+        val fields = stripChars(line.toString(),"()").split(",")
+        var key = ""+combo_num
+        for(i <- 1 to vars.length-1){
+          if(vars{i} == "1"){
+            key = key + "," + fields{i}
+          }else{
+            key = key + ","
+          }
+        }
+        val value = fields{5}.toDouble
+        (key,value)
+      }).combineByKey(
+        (x:Double)=>(x,1),
+        (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
+        (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
+      ).map{case (key, value) => (key, value._1 / value._2.toFloat)}
+      rdd.foreach(println)
+    }
   }
-
-}
+ }
