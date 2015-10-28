@@ -2,8 +2,16 @@ package spark_cube
 
 import org.apache.spark.{SparkContext, SparkConf}
 import scala.io.Source
+import java.io.File
+
 
 object build {
+  case class Config(input: File = new File("1"),
+                    combo: File = new File("."),
+                    output: File = new File("data"),
+                    appName: String = "Cube Build",
+                    yyyymm: String = "",
+                    master: String = "")
 
   // Get the previous 12 months by giving a specific month
   def get_12_months(yyyymm: String) : Array[String] = {
@@ -26,7 +34,7 @@ object build {
       }
     }
 
-    return months
+    months
   }
 
   // remove specific char in a string
@@ -38,10 +46,37 @@ object build {
 
     val ret_val = lines.filter(line => line.split(","){0} == "1")
                             .map(line=>line.substring(2)).toArray
-    return ret_val
+    ret_val
   }
 
   def main (args: Array[String]){
+    //Build the parser to parse the arguments
+//    val parser = new scopt.OptionParser[Config]("Spark Cube") {
+//      head("Spark Cube", "1.x")
+//      opt[File]('i', "input") required() valueName ("<Data File>") action {
+//        (x, c) => c.copy(input = x)
+//      } text ("The data file")
+//
+//      opt[File]('c', "combo") required() valueName ("<Combo File>") action {
+//        (x, c) => c.copy(combo = x)
+//      } text ("The combo file")
+//
+//      opt[String]('m',"master") required() valueName("<Master>") action {
+//        (x,c) => c.copy(master = x)
+//      } text ("The Spark Master URL")
+//
+//      opt[String] ('y', "yyyymm") required() valueName("<YYYYMM>") action {
+//        (x,c) => c.copy(yyyymm = x)
+//      } text("The Start month and year")
+//
+//      opt[String] ('n', "name") required() valueName("<AppName>") action {
+//        (x,c) => c.copy(appName = x)
+//      } text("The Spark App Name")
+//
+//      note("some notes.\n")
+//      help("help") text ("prints this usage text")
+//    }
+
     val file = args{0}
     val combo_file = args{1}
     val yyyymm = args{2}
@@ -69,7 +104,8 @@ object build {
     val personal_sum = rdd.map(line => {
       val fields = line.split(",")
       // Person + job + ind + state + rate_type
-      val key = fields{0} + "," +fields{1} + "," + fields{2} + "," + fields{3} + "," + fields{4}
+      val key = fields{0} + "," +fields{1} + "," +
+                    fields{2} + "," + fields{3} + "," + fields{4}
       val value = fields{5}.toDouble
       (key,value)
     }).reduceByKey(_ + _)
@@ -95,7 +131,7 @@ object build {
       }).combineByKey(
         (x:Double)=>(x,1),
         (acc:(Double,Int),x:Double) => (acc._1 + x,acc._2 + 1),
-        (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._2, acc1._2 + acc2._2)
+        (acc1:(Double, Int), acc2:(Double, Int)) => (acc1._1 + acc2._1, acc1._2 + acc2._2)
       ).map{case (key, value) => (key, value._2.toString + "," +
         (value._1 / value._2).toFloat.toString)}
 
