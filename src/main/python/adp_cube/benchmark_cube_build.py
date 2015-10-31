@@ -1,14 +1,14 @@
 from pyspark import SparkConf,SparkContext
-import argparse
+import logging
+import ConfigParser
+import sys
+
+debug = False
 
 all_states = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL',
             'IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE',
             'NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD',
             'TN','TX','UT','VT','VA','WA','WV','WI','WY']
-
-# Read the combo definition file
-def read_combo_file(file):
-    return [i.strip()[2:] for i in open(file,'r').readlines()[1:] if i[0] == '1']
 
 
 # Get all 12 months within the input quarter
@@ -29,46 +29,14 @@ def get_12_months(qtr):
 def build_key(combo, line):
     fields = line.split(",")
     combos = combo.strip().split(",")
-    combo_num = combos[0]
     f_list = list()
-    f_list.append(combo_num)
     for i in range(1, len(fields)):
-        if combos[i] != '0':
+        if combos[i-1] != '0':
             f_list.append(fields[i])
         else:
             f_list.append("")
     key = ",".join(f_list)
     return key
-
-
-    #TODO: Add -t, --table for hive table
-    #TODO: Add -p, --partition for partitions
-def parse_arguments():
-    """
-    This function will build a argparsor for the main function,
-    following parameters can be specified in this functions:
-     -c, --combo [File/Path]: The combo definition file
-     -i, --input [File/Path]: The input file path
-     -y, --yyyymm [201506]: The year and month for this cube, retrospect 12 months
-     -o, --output [File/Path]: The output file path
-     -m, --metric [min,max,avg,count]: The matric will compute by the build function
-     -s, --spark [local/Spark UI]: The spark master URL
-    :return: argparsor
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--combo', help = 'The combo you want to compute')
-    parser.add_argument('-i', '--input', help = 'The input file path')
-    parser.add_argument('-q','--quarter', help = 'The year and month of the build')
-    parser.add_argument('-o', '--output', help = 'Output Path')
-    parser.add_argument('-m','--matric', help = 'The matrics you want to compute, separated by "," ')
-    parser.add_argument('-sm','--master', help = 'The spark master url')
-    parser.add_argument('-t','--target', help = 'The target column name to compute matrics')
-
-    args = vars(parser.parse_args())
-    output = args['output']
-    yyyymm = args['quarter']
-    args['output'] = output + '/' + yyyymm + '/' if output[-1] != '/' else output + yyyymm + '/'
-    return args
 
 
 def calculate_min(data, combo):
@@ -103,47 +71,70 @@ def calculate_sum(data, col_idx):
 def apply_filter(data, filter):
     return 0
 
-class Calculator:
-    def __init__(self, data = None, metrics = None, combo = None, index = None):
-        self.data = data
-        self.metrics = None
-        self.combo = combo
-        self.index = index
 
-    def min(self):
-        return self.data \
-        .map(lambda (key,value) : (build_key(self.combo,key), value)) \
-        .reduceByKey(lambda a,b : a if a < b else b)
+def read_config(config_file):
+    logging.info("Reading configuration from %s ..." % config_file)
+    conf = dict()
+    parser = ConfigParser.RawConfigParser()
+    parser.read(config_file)
 
-    def max(self):
-        return self.data \
-        .map(lambda (key,value) : (build_key(self.combo,key), value)) \
-        .reduceByKey(lambda a,b : a if a > b else b)
+    conf['input'] = parser.get('DataSpecs', 'input')
+    conf['target'] = parser.get('DataSpecs', 'target')
+    conf['quarter'] = parser.get('DataSpecs','quarter')
+    conf['master'] = parser.get('SparkSpecs','master')
 
-    def avg_with_cnt(self):
-        return self.data \
-        .map(lambda (key,value):(build_key(self.combo,key),value)) \
-        .combineByKey(lambda value: (value, 1),
-                    lambda x, value: (x[0] + value, x[1] + 1),
-                    lambda x, y: (x[0] + y[0], x[1] + y[1])) \
-        .map(lambda (label, (value_sum, count)) :
-                                    (label , str(count) + "," + str(value_sum/count)))
-    def sum(self):
-        return self.data\
-        .map(lambda line: (",".join(line.strip().split(",")[:5]), float(line.strip().split(",")[self.index])))\
-        .reduceByKey(lambda a, b:a+b)
+    # Add '/' if out path doesn't ends with /
+    out = parser.get('DataSpecs', 'output')
+    out = out if out[-1] == '/' else out + '/'
+    conf['output'] = out
+    # Process the combos
+    items = parser.items('Combos')
+    all_dims = parser.get('DataSpecs','all_dimensions').split(",")
 
-def exec_build(data, args):
+    levels = dict((int(x[-1]),y) for x,y in items if y !='')
+    dim_idx = dict((y,x) for x,y in enumerate(all_dims))
+
+    combos_tmp = list()
+    for level in levels.keys():
+        if level == 1:
+            combos_tmp += levels[level].split(",")
+        else:
+            combos_tmp += [i.split(",") for i in levels[level].strip("[]'").split("],[")]
+
+    combos = dict()
+
+    for combo in combos_tmp:
+        tmp = ['0']*4
+        if type(combo) == str:
+            tmp[dim_idx[combo]] = '1'
+            combo_name = combo
+        else:
+            for field in combo:
+                if field in all_dims:
+                    tmp[dim_idx[field]] = '1'
+                combo_name = " and ".join(combo)
+        combos[",".join(tmp)] = combo_name
+    conf['all_combos'] = combos
+
+    logging.info('Read the configuration file Successfully!')
+
+    return conf
+
+
+def exec_build(data, config):
     # Get all the arguments from the parser
-    combo_file = args['combo']
-    qtr = args['quarter']
-    output = args['output']
-    target = args['target']
+    qtr = config['quarter']
+    output = config['output']
+    target = config['target']
+    all_combos_dict = config['all_combos']
+    all_combos = all_combos_dict.keys()
 
-        # Find all months within 12 months
+    # Find all months within 12 months
     all_months = get_12_months(qtr)
+    logging.info("Cube will be built base on following months: %s" % str(all_months))
 
-    all_combos = read_combo_file(combo_file)
+    # logging.info("Reading Configuration file: " + combo_file)
+    # all_combos = read_combo_file(combo_file)
     # TODO MIGHT BE REMOVED IF THE INPUT IS FROM HIVE TABLE
     header = data.first()
 
@@ -155,23 +146,27 @@ def exec_build(data, args):
     # TODO STATUS == 'A' OR STATUS == 'T'
     # TODO AND JOB_SCORE > 70.0
     # TODO AND ((RATE_TYPE == 'H' AND RATE_AMOUNT <500) OR (RATE_TYPE == 'S' AND RATE_AMOUNT < 40000))
+    logging.info("Applying filter on months and states...")
     data = data.filter(lambda x : x != header) \
         .filter(lambda line: line.strip().split(",")[-1] in all_months) \
         .filter(lambda line: line.strip().split(",")[3] in all_states)
         #.filter(lambda line: line.strip().split(",")[?]) in ['T','A'])
 
     # Compute the total wage for each person within last 12 months
+    logging.info("Calculating total wage for each person in previous 12 months ...")
     person_total = calculate_sum(data, idx)
 
     # Iterate all combos
     for combo in all_combos:
+        logging.info("Processing combo: %s ..." % all_combos_dict[combo])
         # Computer average
         # calculator = Calculator(data = data, combo = combo)
         # data_avg = calculator.avg_with_cnt()
         data_avg = calculate_avg_with_cnt(person_total, combo)
 
         # Apply filter employee count > 180
-        data_new = data_avg.filter(lambda (x,y) : int(y.split(",")[0])>180)
+        logging.info("Applying filter employee count > 5")
+        data_new = data_avg.filter(lambda (x,y) : int(y.split(",")[0])>5)
 
         # Computer min
         # data_min = calculator.min()
@@ -186,27 +181,51 @@ def exec_build(data, args):
                 [i.strip("'()") for i in str(value).split(",")])) \
             .repartition(1)
 
-        for i in data_final.collect():
-            print i
+        logging.info("Successfully build cube for combo: " + all_combos_dict[combo])
+        if debug:
+            logging.info("The result for combo: %s " % all_combos_dict[combo])
+            for i in data_final.collect():
+                print i
 
-        output_path = output + combo.split(",")[0]
+        output_path = output + qtr + '/' + str(int(''.join([i for i in combo.split(",")]), 2))
+        logging.info("Saving result to: %s ..." % output_path)
         data_final.saveAsTextFile(output_path)
 
 
 def main():
-    # Build the arguments parser and parse the arguments
-    args = parse_arguments()
-    data_file = args['input']
-    master = args['master']
+    # Initial the logger
+    logging.basicConfig(level=logging.INFO) #, filename=str(round(time.time()*1000))+'.txt')
+    logger = logging.getLogger('benchmark_cube_build')
 
+    # Get config file
+    config_file=sys.argv[1]
+
+    # Read config file
+    config = read_config(config_file)
+
+    input_path = config['input']
+    master = config['master']
+
+    logger.info('The cube will be built on Spark Master: %s' % master)
+    logger.info('Start Spark Instance ...')
+    logging.info('AppName is Cube Build Beta')
+
+    # Start Spark
     conf = SparkConf() \
         .setAppName('Cube Build Beta') \
         .setMaster(master) \
         .set("spark.hadoop.validateOutputSpecs", "false") #TODO TEST PURPOSE, WILL BE REMOVED
-
     sc = SparkContext(conf=conf)
-    data = sc.textFile(data_file)
-    exec_build(data, args)
+
+    # Read data into Spark
+    data = sc.textFile(input_path)
+
+    logger.info('Start building benchmark cube...')
+
+    # Execute building cube
+    exec_build(data, config)
+
+    logging.info('Cube built successfully!')
 
 
 if __name__ == '__main__':

@@ -7,8 +7,8 @@ all_states = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','
 
 # Read the combo definition file
 def read_combo_file(file):
-    ret_val = [i.strip()[2:] for i in open(file,'r').readlines()[1:] if i[0] == '1']
-    return ret_val
+    return [i.strip()[2:] for i in open(file,'r').readlines()[1:] if i[0] == '1']
+
 
 # Get all 12 months within the input quarter
 def get_12_months(qtr):
@@ -39,9 +39,11 @@ def build_key(combo, line):
     key = ",".join(f_list)
     return key
 
-#TODO: Add -t, --table for hive table
-#TODO: Add -p, --partition for partitions
-def build_parse_arguments():
+
+    #   TODO: Add -t, --table for hive table
+    #   TODO: Add -p, --partition for partitions
+    #   FIXME: Change to read the config in a properties file
+def parse_arguments():
     """
     This function will build a argparsor for the main function,
     following parameters can be specified in this functions:
@@ -65,8 +67,40 @@ def build_parse_arguments():
     args = vars(parser.parse_args())
     output = args['output']
     yyyymm = args['quarter']
-
     args['output'] = output + '/' + yyyymm + '/' if output[-1] != '/' else output + yyyymm + '/'
-
     return args
+
+
+
+def calculate_min(data, combo):
+    return data \
+        .map(lambda (key,value) : (build_key(combo,key), value)) \
+        .reduceByKey(lambda a,b : a if a < b else b)
+
+
+def calculate_max(data, combo):
+    return data \
+        .map(lambda (key,value) : (build_key(combo,key), value)) \
+        .reduceByKey(lambda a,b : a if a > b else b)
+
+
+def calculate_avg_with_cnt(data, combo):
+    return data \
+        .map(lambda (key,value):(build_key(combo,key),value)) \
+        .combineByKey(lambda value: (value, 1),
+                    lambda x, value: (x[0] + value, x[1] + 1),
+                    lambda x, y: (x[0] + y[0], x[1] + y[1])) \
+        .map(lambda (label, (value_sum, count)) :
+                                    (label , str(count) + "," + str(value_sum/count)))
+
+
+def calculate_sum(data, col_idx):
+    return data\
+        .map(lambda line: (",".join(line.strip().split(",")[:5]), float(line.strip().split(",")[col_idx])))\
+        .reduceByKey(lambda a, b:a+b)
+
+
+# TODO Design the way to apply filter to make it generic
+def apply_filter(data, filter):
+    return 0
 

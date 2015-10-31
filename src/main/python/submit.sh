@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-spark-submit pyspark_cube/build.py \
+spark-submit adp_cube/benchmark_cube_build.py \
             --input ~/scripts/spark/data/data.csv \
-            --output ~/scripts/spark/out \
-            --yyyymm 201506 \
-            --combo ~/scripts/spark/data/combo.csv
+            --output ~/scripts/spark/src/main/python/out \
+            --quarter 2015Q2 \
+            --combo ~/scripts/spark/src/main/python/data/combo.csv \
+			--target gross_wage \
+			--master local
+
