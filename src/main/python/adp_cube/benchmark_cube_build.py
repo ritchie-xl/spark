@@ -16,13 +16,16 @@ class Calculator:
 
     def min(self,data):
         """Return a RDD
-        Compute the minimum for the input RDD's value
+        Compute the minimum for the input RDD's specified column
         """
         return data \
             .map(lambda (key, value): (build_key(self.combo, key), value)) \
             .reduceByKey(lambda a, b: a if a < b else b)
 
     def max(self,data):
+        """Return a RDD
+        Compute the maximum for the input RDD's specified column
+        """
         return data \
             .map(lambda (key, value): (build_key(self.combo, key), value)) \
             .reduceByKey(lambda a, b: a if a > b else b)
@@ -51,8 +54,8 @@ all_states = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','
 # Get all 12 months within the input quarter
 def get_12_months(qtr):
     """
-    :param qtr: includes the year and quarter
-    :return: a list including 12 months no later than the specified input quarter
+    :param qtr: The quarter(YYYYQQ, eg, 2015Q2)
+    :return: A list with 12 months including the input quarter and previous 3 quarters
     """
     ret_val = list()
     yyyy, mm = int(qtr[:4]), int(qtr[-1])*3
@@ -69,9 +72,9 @@ def get_12_months(qtr):
 
 def build_key(combo, line):
     """
-    :param combo: a binary array indicate which dimensions are included in the calculation
-    :param line: the actual data
-    :return: a line include the data with only specified dimensions, otherwise empty
+    :param combo: A binary array indicate which dimensions are included in the calculation
+    :param line: The actual data
+    :return: A line include the data with only specified dimensions, otherwise empty
     """
     fields = line.split(",")
     combos = combo.strip().split(",")
@@ -116,17 +119,17 @@ def build_key(combo, line):
 # TODO(xial): Design the way to apply filter to make it generic
 def apply_filter(data, filter):
     """
-    :param data: the RDD will be applied filter on
-    :param filter: the filter string
-    :return: an new RDD has been applied the input filter
+    :param data: The RDD will be applied filter on
+    :param filter: The filter string
+    :return: An new RDD has been applied the input filter
     """
     return 0
 
 
 def read_config(config_file):
     """
-    :param config_file: input config file path, the config file is in java properties file format
-    :return: a dictionary include all properties and their values
+    :param config_file: Input config file path, the config file is in java properties file format
+    :return: A dictionary include all properties and their values
     """
     logging.info("Reading configuration from %s ..." % config_file)
     conf = dict()
@@ -178,8 +181,8 @@ def read_config(config_file):
 
 def exec_build(data, config):
     """
-    :param data: the RDD will run all the calculation on
-    :param config: config file path
+    :param data: The RDD will run all the calculation on
+    :param config: Config file path
     :return: None
     """
 
