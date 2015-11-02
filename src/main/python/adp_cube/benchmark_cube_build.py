@@ -1,9 +1,46 @@
-from pyspark import SparkConf,SparkContext
+#!/usr/bin/python
 import logging
 import ConfigParser
 import sys
 
-debug = False
+from pyspark import SparkConf,SparkContext
+
+__DEBUG__ = True
+
+# TODO(xial): Add more metric calculation if needed here
+class Calculator:
+    def __init__(self, metrics=None, combo=None, index=None):
+        self.metrics = None
+        self.combo = combo
+        self.index = index
+
+    def min(self,data):
+        """Return a RDD
+        Compute the minimum for the input RDD's value
+        """
+        return data \
+            .map(lambda (key, value): (build_key(self.combo, key), value)) \
+            .reduceByKey(lambda a, b: a if a < b else b)
+
+    def max(self,data):
+        return data \
+            .map(lambda (key, value): (build_key(self.combo, key), value)) \
+            .reduceByKey(lambda a, b: a if a > b else b)
+
+    def avg_with_cnt(self,data):
+        return data \
+            .map(lambda (key, value): (build_key(self.combo, key), value)) \
+            .combineByKey(lambda value: (value, 1),
+                          lambda x, value: (x[0]+value, x[1]+1),
+                          lambda x, y: (x[0]+y[0], x[1]+y[1])) \
+            .map(lambda (label, (value_sum, count)):
+                 (label, str(count) + "," + str(value_sum/count)))
+
+    def sum(self,data):
+        return data \
+            .map(lambda line: (",".join(line.strip().split(",")[:5]),
+                               float(line.strip().split(",")[self.index]))) \
+            .reduceByKey(lambda a, b: a + b)
 
 all_states = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL',
             'IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE',
@@ -13,6 +50,10 @@ all_states = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','
 
 # Get all 12 months within the input quarter
 def get_12_months(qtr):
+    """
+    :param qtr: includes the year and quarter
+    :return: a list including 12 months no later than the specified input quarter
+    """
     ret_val = list()
     yyyy, mm = int(qtr[:4]), int(qtr[-1])*3
 
@@ -27,6 +68,11 @@ def get_12_months(qtr):
 
 
 def build_key(combo, line):
+    """
+    :param combo: a binary array indicate which dimensions are included in the calculation
+    :param line: the actual data
+    :return: a line include the data with only specified dimensions, otherwise empty
+    """
     fields = line.split(",")
     combos = combo.strip().split(",")
     f_list = list()
@@ -39,40 +85,49 @@ def build_key(combo, line):
     return key
 
 
-def calculate_min(data, combo):
-    return data \
-        .map(lambda (key,value) : (build_key(combo,key), value)) \
-        .reduceByKey(lambda a,b : a if a < b else b)
+# def calculate_min(data, combo):
+#     return data \
+#         .map(lambda (key,value) : (build_key(combo,key), value)) \
+#         .reduceByKey(lambda a,b : a if a < b else b)
 
 
-def calculate_max(data, combo):
-    return data \
-        .map(lambda (key,value) : (build_key(combo,key), value)) \
-        .reduceByKey(lambda a,b : a if a > b else b)
+# def calculate_max(data, combo):
+#     return data \
+#         .map(lambda (key,value) : (build_key(combo,key), value)) \
+#         .reduceByKey(lambda a,b : a if a > b else b)
 
 
-def calculate_avg_with_cnt(data, combo):
-    return data \
-        .map(lambda (key,value):(build_key(combo,key),value)) \
-        .combineByKey(lambda value: (value, 1),
-                    lambda x, value: (x[0] + value, x[1] + 1),
-                    lambda x, y: (x[0] + y[0], x[1] + y[1])) \
-        .map(lambda (label, (value_sum, count)) :
-                                    (label , str(count) + "," + str(value_sum/count)))
+# def calculate_avg_with_cnt(data, combo):
+#     return data \
+#         .map(lambda (key,value):(build_key(combo,key),value)) \
+#         .combineByKey(lambda value: (value, 1),
+#                     lambda x, value: (x[0] + value, x[1] + 1),
+#                     lambda x, y: (x[0] + y[0], x[1] + y[1])) \
+#         .map(lambda (label, (value_sum, count)) :
+#                                     (label , str(count) + "," + str(value_sum/count)))
 
 
-def calculate_sum(data, col_idx):
-    return data\
-        .map(lambda line: (",".join(line.strip().split(",")[:5]), float(line.strip().split(",")[col_idx])))\
-        .reduceByKey(lambda a, b:a+b)
+# def calculate_sum(data, col_idx):
+#     return data\
+#         .map(lambda line: (",".join(line.strip().split(",")[:5]), float(line.strip().split(",")[col_idx])))\
+#         .reduceByKey(lambda a, b:a+b)
 
 
-# TODO Design the way to apply filter to make it generic
+# TODO(xial): Design the way to apply filter to make it generic
 def apply_filter(data, filter):
+    """
+    :param data: the RDD will be applied filter on
+    :param filter: the filter string
+    :return: an new RDD has been applied the input filter
+    """
     return 0
 
 
 def read_config(config_file):
+    """
+    :param config_file: input config file path, the config file is in java properties file format
+    :return: a dictionary include all properties and their values
+    """
     logging.info("Reading configuration from %s ..." % config_file)
     conf = dict()
     parser = ConfigParser.RawConfigParser()
@@ -122,6 +177,12 @@ def read_config(config_file):
 
 
 def exec_build(data, config):
+    """
+    :param data: the RDD will run all the calculation on
+    :param config: config file path
+    :return: None
+    """
+
     # Get all the arguments from the parser
     qtr = config['quarter']
     output = config['output']
@@ -133,19 +194,17 @@ def exec_build(data, config):
     all_months = get_12_months(qtr)
     logging.info("Cube will be built base on following months: %s" % str(all_months))
 
-    # logging.info("Reading Configuration file: " + combo_file)
-    # all_combos = read_combo_file(combo_file)
-    # TODO MIGHT BE REMOVED IF THE INPUT IS FROM HIVE TABLE
+    # TODO(xial): MIGHT BE REMOVED IF THE INPUT IS FROM HIVE TABLE
     header = data.first()
 
-    # TODO NEED TO BE MODIFIED IF INPUT IS FROM HIVE TABLE
-    idx = header.strip().split(",").index(target)
+    # TODO(xial): NEED TO BE MODIFIED IF INPUT IS FROM HIVE TABLE
+    idx = header.strip().split(",").index(target) # Benchmark target variable's column index in data
 
     # Apply filters, months, states
-    # TODO CREATE A FUNCTION TO APPLY A LIST OF FILTERS
-    # TODO STATUS == 'A' OR STATUS == 'T'
-    # TODO AND JOB_SCORE > 70.0
-    # TODO AND ((RATE_TYPE == 'H' AND RATE_AMOUNT <500) OR (RATE_TYPE == 'S' AND RATE_AMOUNT < 40000))
+    # TODO(xial): CREATE A FUNCTION TO APPLY A LIST OF FILTERS
+    # TODO(xial): STATUS == 'A' OR STATUS == 'T'
+    # TODO(xial): AND JOB_SCORE > 70.0
+    # TODO(xial): AND ((RATE_TYPE == 'H' AND RATE_AMOUNT <500) OR (RATE_TYPE == 'S' AND RATE_AMOUNT < 40000))
     logging.info("Applying filter on months and states...")
     data = data.filter(lambda x : x != header) \
         .filter(lambda line: line.strip().split(",")[-1] in all_months) \
@@ -154,27 +213,28 @@ def exec_build(data, config):
 
     # Compute the total wage for each person within last 12 months
     logging.info("Calculating total wage for each person in previous 12 months ...")
-    person_total = calculate_sum(data, idx)
+    person_total = Calculator(index=idx).sum(data=data)
+    person_total.cache()
 
     # Iterate all combos
     for combo in all_combos:
         logging.info("Processing combo: %s ..." % all_combos_dict[combo])
         # Computer average
-        # calculator = Calculator(data = data, combo = combo)
-        # data_avg = calculator.avg_with_cnt()
-        data_avg = calculate_avg_with_cnt(person_total, combo)
+        calculator = Calculator(combo=combo)
+        data_avg = calculator.avg_with_cnt(data=person_total)
+        # data_avg = calculate_avg_with_cnt(person_total, combo)
 
         # Apply filter employee count > 180
         logging.info("Applying filter employee count > 5")
         data_new = data_avg.filter(lambda (x,y) : int(y.split(",")[0])>5)
 
         # Computer min
-        # data_min = calculator.min()
-        data_min = calculate_min(person_total, combo)
+        data_min = calculator.min(data=person_total)
+        # data_min = calculate_min(person_total, combo)
 
         # Computer max
-        # data_max = calculator.max()
-        data_max = calculate_max(person_total, combo)
+        data_max = calculator.max(data=person_total)
+        # data_max = calculate_max(person_total, combo)
 
         data_final = data_new.join(data_min).join(data_max) \
             .map(lambda (key, value) : ",".join(key.split(",") +
@@ -182,7 +242,7 @@ def exec_build(data, config):
             .repartition(1)
 
         logging.info("Successfully build cube for combo: " + all_combos_dict[combo])
-        if debug:
+        if __DEBUG__:
             logging.info("The result for combo: %s " % all_combos_dict[combo])
             for i in data_final.collect():
                 print i
@@ -193,6 +253,10 @@ def exec_build(data, config):
 
 
 def main():
+    """
+    Entrance of the script
+    :return:None
+    """
     # Initial the logger
     logging.basicConfig(level=logging.INFO) #, filename=str(round(time.time()*1000))+'.txt')
     logger = logging.getLogger('benchmark_cube_build')
@@ -214,7 +278,7 @@ def main():
     conf = SparkConf() \
         .setAppName('Cube Build Beta') \
         .setMaster(master) \
-        .set("spark.hadoop.validateOutputSpecs", "false") #TODO TEST PURPOSE, WILL BE REMOVED
+        .set("spark.hadoop.validateOutputSpecs", "false") #TODO(xial): TEST PURPOSE, WILL BE REMOVED
     sc = SparkContext(conf=conf)
 
     # Read data into Spark
