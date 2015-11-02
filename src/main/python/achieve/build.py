@@ -1,26 +1,26 @@
 from pyspark import SparkContext, SparkConf
-import adp_cube.Util as adpu
+import achieve.Util as adpu
 
 
 class Calculator:
-    def __init__(self, data=None, metrics=None, combo=None, index=None):
-        self.data = data
+    def __init__(self, metrics=None, combo=None, index=None):
+        # self.data = data
         self.metrics = None
         self.combo = combo
         self.index = index
 
-    def min(self):
-        return self.data \
+    def min(self,data):
+        return data \
             .map(lambda (key, value): (adpu.build_key(self.combo, key), value)) \
             .reduceByKey(lambda a, b: a if a < b else b)
 
-    def max(self):
-        return self.data \
+    def max(self,data):
+        return data \
             .map(lambda (key, value): (adpu.build_key(self.combo, key), value)) \
             .reduceByKey(lambda a, b: a if a > b else b)
 
-    def avg_with_cnt(self):
-        return self.data \
+    def avg_with_cnt(self,data):
+        return data \
             .map(lambda (key, value): (adpu.build_key(self.combo, key), value)) \
             .combineByKey(lambda value: (value, 1),
                           lambda x, value: (x[0] + value, x[1] + 1),
@@ -28,8 +28,8 @@ class Calculator:
             .map(lambda (label, (value_sum, count)):
                  (label, str(count) + "," + str(value_sum / count)))
 
-    def sum(self):
-        return self.data \
+    def sum(self,data):
+        return data \
             .map(lambda line: (",".join(line.strip().split(",")[:5]),
                                float(line.strip().split(",")[self.index]))) \
             .reduceByKey(lambda a, b: a + b)
@@ -50,7 +50,7 @@ def exec_build(data, args):
     header = data.first()
 
     # TODO NEED TO BE MODIFIED IF INPUT IS FROM HIVE TABLE
-    idx = header.strip().split(",").index(target)
+    idx = header.strip().split(",").index(target) #benchmark target variable/column in the data
 
     # Apply filters, months, states
     # TODO CREATE A FUNCTION TO APPLY A LIST OF FILTERS
@@ -64,27 +64,27 @@ def exec_build(data, args):
 
     # Compute the total wage for each person within last 12 months
     cal = Calculator()
-    cal.data = data
     cal.index = idx
-    person_total = cal.sum()
+    person_total = cal.sum(data=data)
+    person_total.cache()
     # person_total = calculate_sum(data, idx)
 
     # Iterate all combos
     for combo in all_combos:
         # Computer average
-        calculator = Calculator(data = person_total, combo = combo)
-        data_avg = calculator.avg_with_cnt()
+        calculator = Calculator(combo = combo)
+        data_avg = calculator.avg_with_cnt(data=person_total)
         # data_avg = calculate_avg_with_cnt(person_total, combo)
 
         # Apply filter employee count > 180
         data_new = data_avg.filter(lambda (x,y) : int(y.split(",")[0])>180)
 
         # Computer min
-        data_min = calculator.min()
+        data_min = calculator.min(data=person_total)
         # data_min = calculate_min(person_total, combo)
 
         # Computer max
-        data_max = calculator.max()
+        data_max = calculator.max(data=person_total)
         # data_max = calculate_max(person_total, combo)
 
         data_final = data_new.join(data_min).join(data_max) \
@@ -97,6 +97,7 @@ def exec_build(data, args):
 
         output_path = output + combo.split(",")[0]
         data_final.saveAsTextFile(output_path)
+
 
 def main():
     # Build the arguments parser and parse the arguments
