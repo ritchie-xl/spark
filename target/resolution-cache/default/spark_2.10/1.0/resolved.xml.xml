@@ -4,7 +4,7 @@
 		module="spark_2.10"
 		revision="1.0"
 		status="integration"
-		publication="20151026211420"
+		publication="20151028140222"
 	>
 		<description>
 		spark
@@ -34,5 +34,6 @@
 		<dependency org="org.scala-lang" name="scala-library" rev="2.10.6" conf="scala-tool->default,optional(default);compile->default(compile)"/>
 		<dependency org="org.apache.spark" name="spark-core_2.10" rev="1.3.0" conf="compile->default(compile)"/>
 		<dependency org="org.scalatest" name="scalatest_2.10" rev="2.1.0" conf="compile->default(compile)"/>
+		<dependency org="com.github.scopt" name="scopt_2.10" rev="3.3.0" conf="compile->default(compile)"/>
 	</dependencies>
 </ivy-module>
