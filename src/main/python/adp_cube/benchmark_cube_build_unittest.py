@@ -2,10 +2,10 @@ __author__ = 'Lei'
 
 import unittest
 
-import adp_cube.benchmark_cube_build as adpb
+import benchmark_cube_build as adpb
 
 from pyspark import SparkConf, SparkContext
-from adp_cube.benchmark_cube_build import Calculator
+from benchmark_cube_build import Calculator
 
 
 class BuildTest(unittest.TestCase):
